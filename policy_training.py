@@ -139,6 +139,7 @@ def supervised_train(
     epochs: int,
     batch_size: int,
     seed: int,
+    on_epoch_end: Callable[[int, list[dict[str, float]]], None] | None = None,
 ) -> list[dict[str, float]]:
     """Assistant-token-only CE, averaged per demonstration then per prompt batch."""
     torch = policy.torch
@@ -165,4 +166,6 @@ def supervised_train(
             torch.nn.utils.clip_grad_norm_(parameters, float(optimizer_settings["gradient_norm_clip"]))
             optimizer.step()
             history.append({"epoch": float(epoch + 1), "batch_start": float(batch_start), "loss": batch_loss})
+        if on_epoch_end is not None:
+            on_epoch_end(epoch + 1, history)
     return history

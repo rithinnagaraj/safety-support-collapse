@@ -256,20 +256,27 @@ def generate_safety_split(
     *, split: str, prompt_count: int, horizon: Horizon | Literal["mixed"], seed: int, template_namespace: str
 ) -> list[SafetyInstance]:
     """Generate a balanced split, grouping two surface variants per latent instance."""
-    if prompt_count % 4:
-        raise ValueError("prompt_count must be divisible by four for family and surface balance")
+    required_divisor = 8 if horizon == "mixed" else 4
+    if prompt_count % required_divisor:
+        raise ValueError(
+            f"prompt_count must be divisible by {required_divisor} for family, horizon, and surface balance"
+        )
     instances: list[SafetyInstance] = []
     latent_count = prompt_count // 2
-    families: list[Family] = ["file_access"] * (latent_count // 2) + ["recipient_authorization"] * (latent_count // 2)
-    random.Random(_stable_seed(seed, split, "family-assignment")).shuffle(families)
     if horizon == "mixed":
-        horizons: list[Horizon] = ["current"] * (latent_count // 2) + ["future"] * (latent_count // 2)
-        random.Random(_stable_seed(seed, split, "horizon-assignment")).shuffle(horizons)
+        assignments: list[tuple[Family, Horizon]] = [
+            (family, selected_horizon)
+            for family in ("file_access", "recipient_authorization")
+            for selected_horizon in ("current", "future")
+            for _ in range(latent_count // 4)
+        ]
+        random.Random(_stable_seed(seed, split, "stratum-assignment")).shuffle(assignments)
     else:
-        horizons = [horizon] * latent_count
+        families: list[Family] = ["file_access"] * (latent_count // 2) + ["recipient_authorization"] * (latent_count // 2)
+        random.Random(_stable_seed(seed, split, "family-assignment")).shuffle(families)
+        assignments = [(family, horizon) for family in families]
     for latent_index in range(latent_count):
-        family = families[latent_index]
-        selected_horizon = horizons[latent_index]
+        family, selected_horizon = assignments[latent_index]
         latent_id = f"{split}-latent-{latent_index:04d}"
         for variant in range(2):
             # Both variants share the exact latent task; only wording/policy
@@ -324,3 +331,11 @@ def validate_split(instances: Iterable[SafetyInstance], expected_count: int | No
     ]
     if mismatched:
         raise ValueError(f"Surface variants do not share latent semantics: {mismatched[:3]}")
+    horizons = {row.horizon for row in rows}
+    if horizons == {"current", "future"}:
+        latent_strata: dict[tuple[str, str], int] = {}
+        for variants in by_latent.values():
+            key = (variants[0].family, variants[0].horizon)
+            latent_strata[key] = latent_strata.get(key, 0) + 1
+        if len(latent_strata) != 4 or len(set(latent_strata.values())) != 1:
+            raise ValueError(f"Mixed split is not balanced across family and horizon: {latent_strata}")

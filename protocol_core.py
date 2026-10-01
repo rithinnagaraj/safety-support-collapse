@@ -14,7 +14,7 @@ from typing import Any, Iterable, Iterator
 
 
 MODEL_ID = "Qwen/Qwen2.5-3B-Instruct"
-PROTOCOL_VERSION = "pilot-v1"
+PROTOCOL_VERSION = "pilot-v2"
 ANALYSIS_SEED = 9001
 
 
@@ -89,4 +89,3 @@ def require_keys(mapping: dict[str, Any], required: set[str], context: str) -> N
     missing = sorted(required - set(mapping))
     if missing:
         raise ValueError(f"{context} is missing required fields: {', '.join(missing)}")
-

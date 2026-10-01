@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 from pathlib import Path
 import sys
 import unittest
@@ -22,6 +23,7 @@ from manual_review import create_review_pack, validate_review  # noqa: E402
 from pilot_analysis import (  # noqa: E402
     experiment_a_decision,
     paired_joint_interval,
+    paired_malformed_interval,
     repeated_c32_interval,
 )
 from pilot_evaluation import evaluate_safety, load_safety  # noqa: E402
@@ -32,7 +34,8 @@ from pilot_io import (  # noqa: E402
     record_run_metadata,
     validate_manifest,
 )
-from pilot_training import run_calibration_smoke, train_oracle_sft  # noqa: E402
+from pilot_training import run_calibration_smoke  # noqa: E402
+from learning_check import train_with_development_selection  # noqa: E402
 
 
 def _unit_tests_pass() -> bool:
@@ -61,6 +64,8 @@ def main() -> None:
     manifest = validate_manifest(manifest_path, require_ml=True, execution_device=args.device)
     record_run_metadata(args.output_dir, manifest, "experiment-a")
     config = manifest["frozen_config"]
+    seeds = config["seeds"]
+    gate_settings = config["gates"]["experiment_a"]
 
     all_instances = _all_safety_instances(manifest_path, manifest)
     oracle_failures = []
@@ -72,6 +77,9 @@ def main() -> None:
     unit_pass = _unit_tests_pass()
 
     calibration_train = load_safety(manifest_path.parent / manifest["splits"]["calibration_train"]["file"])
+    calibration_development = load_safety(
+        manifest_path.parent / manifest["splits"]["calibration_development"]["file"]
+    )
     calibration_validation = load_safety(manifest_path.parent / manifest["splits"]["calibration_validation"]["file"])
     review_path = args.review_file or (args.output_dir / "manual-review.jsonl")
     review_binding = content_hash(manifest)
@@ -90,7 +98,7 @@ def main() -> None:
         revision=model["revision"],
         adapter=config["adapter"],
         device=args.device,
-        seed=10_001,
+        seed=int(seeds["experiment_a_smoke"]),
     )
     smoke_report = run_calibration_smoke(
         smoke_policy,
@@ -98,7 +106,7 @@ def main() -> None:
         adapter_settings=config["adapter"],
         optimizer_settings=config["optimizer"],
         smoke_settings=config["calibration_smoke"],
-        seed=10_001,
+        seed=int(seeds["experiment_a_smoke"]),
         output_dir=args.output_dir / "calibration-smoke",
     )
     del smoke_policy
@@ -106,13 +114,14 @@ def main() -> None:
         raise SystemExit("Calibration smoke failed; training is blocked until adapter/batch checks pass.")
 
     initial = HFPolicy(
-        model_id=model["id"], revision=model["revision"], adapter=None, device=args.device, seed=11_001
+        model_id=model["id"], revision=model["revision"], adapter=None, device=args.device,
+        seed=int(seeds["experiment_a_initial_evaluation"][0]),
     )
     first_rows, first_metrics = evaluate_safety(
         initial,
         calibration_validation,
         rollouts=32,
-        stream_seed=11_001,
+        stream_seed=int(seeds["experiment_a_initial_evaluation"][0]),
         checkpoint="initial",
         output_path=args.output_dir / "initial-evaluation-1.jsonl",
     )
@@ -120,38 +129,67 @@ def main() -> None:
         initial,
         calibration_validation,
         rollouts=32,
-        stream_seed=11_002,
+        stream_seed=int(seeds["experiment_a_initial_evaluation"][1]),
         checkpoint="initial",
         output_path=args.output_dir / "initial-evaluation-2.jsonl",
     )
     repeated_interval = repeated_c32_interval(first_rows, second_rows, args.bootstrap_replicates)
+    torch = initial.torch
     del initial
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     disposable = HFPolicy(
         model_id=model["id"],
         revision=model["revision"],
         adapter=config["adapter"],
         device=args.device,
-        seed=12_001,
+        seed=int(seeds["experiment_a_sft"]),
     )
-    train_oracle_sft(
+    learning_report = train_with_development_selection(
         disposable,
-        calibration_train[:64],
+        calibration_train,
+        calibration_development,
         optimizer_settings=config["optimizer"],
-        epochs=4,
-        batch_size=16,
-        seed=12_001,
+        epochs=int(config["training"]["sft_epochs"]),
+        batch_size=int(config["training"]["sft_batch_size"]),
+        training_seed=int(seeds["experiment_a_sft"]),
+        development_rollouts=int(config["training"]["calibration_development_rollouts"]),
+        development_seed=int(seeds["experiment_a_development_evaluation"]),
+        maximum_malformed_rate_increase=float(gate_settings["maximum_malformed_rate_increase"]),
+        minimum_joint_improvement=float(gate_settings["development_min_joint_improvement"]),
         output_dir=args.output_dir,
     )
-    trained_rows, trained_metrics = evaluate_safety(
-        disposable,
-        calibration_validation,
-        rollouts=32,
-        stream_seed=11_003,
-        checkpoint="calibration-sft-disposable",
-        output_path=args.output_dir / "sft-evaluation.jsonl",
-    )
-    sft_interval = paired_joint_interval(first_rows, trained_rows, args.bootstrap_replicates)
+    selected_epoch = learning_report["selection"]["selected_epoch"]
+    trained_metrics = None
+    sft_interval = None
+    malformed_interval = None
+    if selected_epoch is not None:
+        torch = disposable.torch
+        del disposable
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        selected = HFPolicy(
+            model_id=model["id"],
+            revision=model["revision"],
+            adapter=None,
+            adapter_checkpoint=args.output_dir / "checkpoints" / f"epoch-{selected_epoch}",
+            device=args.device,
+            seed=int(seeds["experiment_a_sft"]),
+        )
+        trained_rows, trained_metrics = evaluate_safety(
+            selected,
+            calibration_validation,
+            rollouts=32,
+            stream_seed=int(seeds["experiment_a_final_evaluation"]),
+            checkpoint=f"calibration-sft-selected-epoch-{selected_epoch}",
+            output_path=args.output_dir / "selected-sft-validation.jsonl",
+        )
+        sft_interval = paired_joint_interval(first_rows, trained_rows, args.bootstrap_replicates)
+        malformed_interval = paired_malformed_interval(first_rows, trained_rows, args.bootstrap_replicates)
+        del selected
     decision = experiment_a_decision(
         oracle_pass=not oracle_failures,
         unit_pass=unit_pass,
@@ -161,6 +199,9 @@ def main() -> None:
         second_metrics=second_metrics,
         repeated_interval=repeated_interval,
         sft_interval=sft_interval,
+        malformed_interval=malformed_interval,
+        development_checkpoint_selected=selected_epoch is not None,
+        gate_settings=gate_settings,
     )
     report = {
         "decision": decision,
@@ -168,8 +209,11 @@ def main() -> None:
         "initial_evaluation_2": second_metrics,
         "repeatability_c32_difference": repeated_interval,
         "calibration_smoke": smoke_report,
-        "sft_evaluation": trained_metrics,
+        "development_selection": learning_report,
+        "selected_epoch": selected_epoch,
+        "selected_sft_validation": trained_metrics,
         "sft_joint_improvement": sft_interval,
+        "sft_malformed_rate_change": malformed_interval,
         "disposable_model_discarded": True,
     }
     write_json(args.output_dir / "decision.json", report)

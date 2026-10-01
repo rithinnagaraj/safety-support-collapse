@@ -16,7 +16,7 @@ REPOSITORY_ROOT = SECTION_DIR.parent
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
-from protocol_core import content_hash, read_json, read_jsonl, require_keys, write_json  # noqa: E402
+from protocol_core import PROTOCOL_VERSION, content_hash, read_json, read_jsonl, require_keys, write_json  # noqa: E402
 from benign_tasks import LOGIC_WORDING_BANKS, MATH_WORDING_BANKS, generate_benign_split  # noqa: E402
 from safety_harness import PARSER_SCHEMA_VERSION, SYSTEM_PROMPT, _score  # noqa: E402
 from safety_tasks import (  # noqa: E402
@@ -28,8 +28,8 @@ from safety_tasks import (  # noqa: E402
 )
 
 CONFIG_PATH = SECTION_DIR / "pilot_config.json"
-DEFAULT_DATA_DIR = SECTION_DIR / "data"
-DEFAULT_ARTIFACT_DIR = REPOSITORY_ROOT / "artifacts" / "sanity-check"
+DEFAULT_DATA_DIR = SECTION_DIR / "data" / PROTOCOL_VERSION
+DEFAULT_ARTIFACT_DIR = REPOSITORY_ROOT / "artifacts" / "sanity-check" / PROTOCOL_VERSION
 
 
 def load_config() -> dict[str, Any]:
@@ -164,6 +164,12 @@ def validate_manifest(
         },
         "manifest.frozen_config",
     )
+    if manifest["protocol_version"] != PROTOCOL_VERSION:
+        raise ValueError(
+            f"Manifest protocol {manifest['protocol_version']!r} does not match current {PROTOCOL_VERSION!r}"
+        )
+    if manifest["frozen_config"]["protocol_version"] != PROTOCOL_VERSION:
+        raise ValueError("Frozen configuration protocol does not match the current implementation")
     if manifest["seed_mapping"] != manifest["frozen_config"]["seeds"]:
         raise ValueError("Manifest seed mapping differs from the frozen configuration")
     if manifest["model"] != manifest["frozen_config"]["model"]:

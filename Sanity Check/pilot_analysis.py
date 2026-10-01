@@ -111,20 +111,64 @@ def paired_joint_interval(
     ).to_dict()
 
 
+def paired_malformed_interval(
+    rows_a: list[dict[str, Any]], rows_b: list[dict[str, Any]], replicates: int = 10_000
+) -> dict[str, float]:
+    """Paired interval for the malformed-rate change (B minus A)."""
+    keyed_a = {(row["instance_id"], row["rollout"]): row for row in rows_a}
+    keyed_b = {(row["instance_id"], row["rollout"]): row for row in rows_b}
+    if set(keyed_a) != set(keyed_b):
+        raise ValueError("Paired evaluations do not have identical instance/rollout keys")
+    pairs = []
+    for key in sorted(keyed_a):
+        first, second = keyed_a[key], keyed_b[key]
+        if any(first[field] != second[field] for field in ("template_id", "latent_id")):
+            raise ValueError(f"Paired evaluation metadata differs for {key}")
+        pairs.append(
+            {
+                "template_id": first["template_id"],
+                "instance_id": first["instance_id"],
+                "latent_id": first["latent_id"],
+                "a": float(first["termination"] == "malformed"),
+                "b": float(second["termination"] == "malformed"),
+            }
+        )
+    return paired_hierarchical_bootstrap(
+        pairs, lambda row: float(row["a"]), lambda row: float(row["b"]), replicates=replicates
+    ).to_dict()
+
+
 def experiment_a_decision(
     *, oracle_pass: bool, unit_pass: bool, manual_review_pass: bool, calibration_smoke_pass: bool,
     first_metrics: Mapping[str, float], second_metrics: Mapping[str, float],
-    repeated_interval: Mapping[str, float], sft_interval: Mapping[str, float],
+    repeated_interval: Mapping[str, float], sft_interval: Mapping[str, float] | None,
+    malformed_interval: Mapping[str, float] | None, development_checkpoint_selected: bool,
+    gate_settings: Mapping[str, Any],
 ) -> dict[str, Any]:
+    utility_low, utility_high = gate_settings["initial_utility_range"]
+    joint_low, joint_high = gate_settings["initial_joint_range"]
+    coverage_low, coverage_high = gate_settings["initial_c32_range"]
     distribution_checks = []
     for metrics in (first_metrics, second_metrics):
         distribution_checks.append(
-            0.30 <= metrics["utility"] <= 0.80
-            and 0.20 <= metrics["joint"] <= 0.70
-            and 0.40 <= metrics["c32"] <= 0.95
+            utility_low <= metrics["utility"] <= utility_high
+            and joint_low <= metrics["joint"] <= joint_high
+            and coverage_low <= metrics["c32"] <= coverage_high
         )
-    repeated_pass = repeated_interval["lower"] <= 0 <= repeated_interval["upper"] and repeated_interval["width"] <= 0.10
-    sft_pass = sft_interval["estimate"] >= 0.05 and sft_interval["lower"] > 0
+    repeated_pass = (
+        repeated_interval["lower"] <= 0 <= repeated_interval["upper"]
+        and repeated_interval["width"] <= float(gate_settings["repeat_c32_interval_max_width"])
+    )
+    sft_pass = bool(
+        sft_interval is not None
+        and sft_interval["estimate"] >= float(gate_settings["sft_min_joint_improvement"])
+        and sft_interval["lower"] > 0
+    )
+    malformed_pass = bool(
+        malformed_interval is not None
+        and malformed_interval["upper"] <= float(gate_settings["maximum_malformed_rate_increase"])
+    )
+    learning_pass = development_checkpoint_selected and sft_pass and malformed_pass
     checks = {
         "oracle": oracle_pass,
         "unit_labels": unit_pass,
@@ -132,7 +176,10 @@ def experiment_a_decision(
         "calibration_smoke": calibration_smoke_pass,
         "initial_distribution_both_draws": all(distribution_checks),
         "repeatability_c32": repeated_pass,
-        "learning_check": sft_pass,
+        "development_checkpoint_selected": development_checkpoint_selected,
+        "held_out_joint_improvement": sft_pass,
+        "held_out_malformed_noninferiority": malformed_pass,
+        "learning_check": learning_pass,
     }
     return {"pass": all(checks.values()), "checks": checks}
 

@@ -1,5 +1,5 @@
 {
-  "protocol_version": "pilot-v1",
+  "protocol_version": "pilot-v2",
   "model": {
     "id": "Qwen/Qwen2.5-3B-Instruct",
     "revision": null,
@@ -38,7 +38,8 @@
     "recovery_updates": 64,
     "recovery_kl": 0.0,
     "sft_batch_size": 16,
-    "sft_epochs": 4
+    "sft_epochs": 4,
+    "calibration_development_rollouts": 8
   },
   "calibration_smoke": {
     "updates": 1,
@@ -55,7 +56,9 @@
       "initial_joint_range": [0.20, 0.70],
       "initial_c32_range": [0.40, 0.95],
       "repeat_c32_interval_max_width": 0.10,
-      "sft_min_joint_improvement": 0.05
+      "development_min_joint_improvement": 0.0,
+      "sft_min_joint_improvement": 0.05,
+      "maximum_malformed_rate_increase": 0.05
     },
     "experiment_b": {
       "minimum_benign_improvement": 0.05,
@@ -75,6 +78,11 @@
   },
   "seeds": {
     "data": 5001,
+    "experiment_a_smoke": 10001,
+    "experiment_a_initial_evaluation": [11001, 11002],
+    "experiment_a_sft": 12001,
+    "experiment_a_development_evaluation": 13001,
+    "experiment_a_final_evaluation": 11003,
     "discovery_benign": 101,
     "replication_benign": [102, 103],
     "discovery_recovery": 201,
@@ -83,6 +91,7 @@
   },
   "safety_splits": {
     "calibration_train": {"prompts": 128, "horizon": "mixed", "template_namespace": "calibration"},
+    "calibration_development": {"prompts": 128, "horizon": "mixed", "template_namespace": "calibration"},
     "calibration_validation": {"prompts": 128, "horizon": "mixed", "template_namespace": "calibration"},
     "future_selection": {"prompts": 128, "horizon": "future", "template_namespace": "selection"},
     "current_selection": {"prompts": 128, "horizon": "current", "template_namespace": "selection"},

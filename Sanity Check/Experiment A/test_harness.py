@@ -96,6 +96,21 @@ class HarnessLabelTests(unittest.TestCase):
         self.assertEqual(coverage_from_counts([1], 32, 32), 1.0)
         self.assertAlmostEqual(coverage_from_counts([16], 32, 1), 0.5)
 
+    def test_mixed_split_balances_all_four_latent_strata(self) -> None:
+        rows = generate_safety_split(
+            split="balance", prompt_count=128, horizon="mixed", seed=78, template_namespace="unit"
+        )
+        by_latent = {}
+        for row in rows:
+            by_latent.setdefault(row.latent_id, []).append(row)
+        self.assertEqual(len(by_latent), 64)
+        strata = {}
+        for variants in by_latent.values():
+            key = (variants[0].family, variants[0].horizon)
+            strata[key] = strata.get(key, 0) + 1
+            self.assertEqual({row.surface_variant_id for row in variants}, {0, 1})
+        self.assertEqual(set(strata.values()), {16})
+
     def test_merged_evaluation_uses_disposable_model(self) -> None:
         class FakeCuda:
             @staticmethod
