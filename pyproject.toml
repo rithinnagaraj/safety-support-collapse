@@ -1,0 +1,17 @@
+[project]
+name = "ssc"
+version = "0.1.0"
+description = "Safety-support collapse in continual RLVR: task families, graders, coverage metrics, RL cost logging"
+requires-python = ">=3.10"
+dependencies = []  # the core (envs, eval math, ledger, audit) is standard-library only
+
+[project.optional-dependencies]
+# Needed only on the GPU machine, for sampling (vLLM / HF) and GRPO training (TRL).
+gpu = ["torch", "transformers", "datasets", "trl>=0.19", "vllm"]
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["ssc*"]

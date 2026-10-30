@@ -1,0 +1,75 @@
+{
+  "_comment": "M1 pilot (plan section 11). Budgets, batch sizes and save cadence are starting guesses; the pilot exists to calibrate them. Batch sizes are sized for a 24 GB GPU (L4); on an A100 raise per_device_train_batch_size to 64.",
+  "model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "runs_dir": "runs/pilot",
+  "results_dir": "results/pilot",
+  "group_size": 8,
+  "keep_checkpoints": false,
+
+  "grpo_defaults": {
+    "learning_rate": 1e-6,
+    "per_device_train_batch_size": 16,
+    "gradient_accumulation_steps": 16,
+    "max_prompt_length": 1024,
+    "max_completion_length": 512,
+    "temperature": 1.0,
+    "top_p": 1.0,
+    "beta": 0.0,
+    "max_steps": 100000,
+    "logging_steps": 1,
+    "save_steps": 100000,
+    "save_only_model": true,
+    "bf16": true,
+    "gradient_checkpointing": true,
+    "model_init_kwargs": {"torch_dtype": "bfloat16"},
+    "use_vllm": true,
+    "vllm_mode": "colocate",
+    "vllm_gpu_memory_utilization": 0.3,
+    "report_to": "none"
+  },
+
+  "stage0": {"family": "fa_secret", "data": "data/fa_secret/train.jsonl", "seed": 0,
+             "budget_trajectories": 102400, "grpo": {}},
+
+  "benign_seeds": [1, 2, 3],
+  "benign_stages": [
+    {"name": "stage1", "family": "math", "data": "data/math_easy/train.jsonl", "budget_trajectories": 102400,
+     "grpo": {"max_completion_length": 1024}},
+    {"name": "stage2", "family": "code", "data": "data/code/train.jsonl", "budget_trajectories": 102400,
+     "grpo": {"max_completion_length": 768}},
+    {"name": "stage3", "family": "logic_kk", "data": "data/logic_kk/train.jsonl", "budget_trajectories": 102400,
+     "grpo": {"max_completion_length": 1024}},
+    {"name": "stage4", "family": "math", "data": "data/math_hard/train.jsonl", "budget_trajectories": 102400,
+     "grpo": {"max_completion_length": 1024}}
+  ],
+
+  "coverage_evals": [
+    {"name": "fb", "family": "fb_injection", "data": "data/fb_injection/heldout.jsonl", "num_tasks": 500, "n": 32, "draws": 2, "max_tokens": 512},
+    {"name": "fa", "family": "fa_secret", "data": "data/fa_secret/heldout.jsonl", "num_tasks": 500, "n": 32, "draws": 2, "max_tokens": 512},
+    {"name": "fa_v2", "family": "fa_secret_v2", "data": "data/fa_secret_v2/heldout.jsonl", "num_tasks": 500, "n": 32, "draws": 1, "max_tokens": 512},
+    {"name": "math_easy", "family": "math", "data": "data/math_easy/heldout.jsonl", "num_tasks": 300, "n": 32, "draws": 1, "max_tokens": 1024},
+    {"name": "math_hard", "family": "math", "data": "data/math_hard/heldout.jsonl", "num_tasks": 300, "n": 32, "draws": 1, "max_tokens": 1024},
+    {"name": "code", "family": "code", "data": "data/code/heldout.jsonl", "num_tasks": 250, "n": 32, "draws": 1, "max_tokens": 768},
+    {"name": "logic", "family": "logic_kk", "data": "data/logic_kk/heldout.jsonl", "num_tasks": 300, "n": 32, "draws": 1, "max_tokens": 1024}
+  ],
+  "benign_evals": ["math_easy", "math_hard", "code", "logic"],
+
+  "recovery": {"family": "fb_injection", "data": "data/fb_injection/train.jsonl", "budget_trajectories": 51200,
+               "seeds_from_stage0": [1, 2, 3], "seeds_from_stage4": [1, 2],
+               "grpo": {"save_steps": 5}},
+  "ceiling": {"budget_multiplier": 3, "seed": 101},
+
+  "recovery_eval": {
+    "target": {"name": "fb", "family": "fb_injection", "data": "data/fb_injection/heldout.jsonl", "num_tasks": 500, "n": 4, "max_tokens": 512},
+    "benign": [
+      {"name": "math_easy", "family": "math", "data": "data/math_easy/heldout.jsonl", "num_tasks": 250, "n": 2, "max_tokens": 1024},
+      {"name": "math_hard", "family": "math", "data": "data/math_hard/heldout.jsonl", "num_tasks": 250, "n": 2, "max_tokens": 1024},
+      {"name": "code", "family": "code", "data": "data/code/heldout.jsonl", "num_tasks": 250, "n": 2, "max_tokens": 768},
+      {"name": "logic", "family": "logic_kk", "data": "data/logic_kk/heldout.jsonl", "num_tasks": 250, "n": 2, "max_tokens": 1024}
+    ]
+  },
+
+  "analysis": {"tau_margin": 0.05, "min_tau_gap": 0.15, "consecutive": 2, "max_benign_drop": 0.03,
+               "equivalence_margin": 0.02, "min_coverage_drop": 0.05, "plateau_last_k": 3,
+               "budget_multiple_of_median": 2.0, "power": 0.8, "alpha": 0.05}
+}

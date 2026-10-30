@@ -1,0 +1,29 @@
+{
+  "_comment": "Recovery on the primary family (FB). Budget B and save cadence are placeholders until the M1 pilot calibrates them.",
+  "model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "family": "fb_injection",
+  "data": "data/fb_injection/train.jsonl",
+  "seed": 1,
+  "group_size": 8,
+  "budget_trajectories": 51200,
+  "grpo": {
+    "learning_rate": 1e-6,
+    "per_device_train_batch_size": 64,
+    "gradient_accumulation_steps": 8,
+    "max_prompt_length": 1024,
+    "max_completion_length": 512,
+    "temperature": 1.0,
+    "top_p": 1.0,
+    "beta": 0.0,
+    "max_steps": 100000,
+    "logging_steps": 1,
+    "save_steps": 10,
+    "save_only_model": true,
+    "bf16": true,
+    "gradient_checkpointing": true,
+    "use_vllm": true,
+    "vllm_mode": "colocate",
+    "vllm_gpu_memory_utilization": 0.3,
+    "report_to": "none"
+  }
+}
