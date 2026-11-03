@@ -1,11 +1,13 @@
 """Ledger, reward adapter, and recovery-target checks (plan section 13, "Group-type counters", "Cost accounting")."""
 
+import dataclasses
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
 from ssc.envs import get_family, make_tasks
+from ssc.train.grpo import grpo_kwargs
 from ssc.train.ledger import CostLedger, GroupAlignmentError, cost_at_step, load_rows
 from ssc.train.rewards import SUReward
 from ssc.train.target import EvalPoint, check_tau, time_to_target
@@ -82,6 +84,41 @@ class Reward(unittest.TestCase):
         reward = SUReward(CostLedger(group_size=self.g))
         with self.assertRaises(ValueError):
             reward(prompts=None, completions=self.completions, task_json=self.task_json)
+
+
+class GRPOKwargs(unittest.TestCase):
+    """Config adapter for TRL versions with and without max_prompt_length (no TRL needed)."""
+
+    @dataclasses.dataclass
+    class NewTRL:  # stands in for a GRPOConfig that dropped max_prompt_length
+        learning_rate: float = 0.0
+        max_completion_length: int = 0
+
+    @dataclasses.dataclass
+    class OldTRL(NewTRL):
+        max_prompt_length: int = 0
+
+    class Tok:  # one token per character
+        def apply_chat_template(self, messages, add_generation_prompt, tokenize):
+            return "".join(m["content"] for m in messages)
+
+        def __call__(self, text, add_special_tokens):
+            return {"input_ids": list(text)}
+
+    data = {"prompt": [[{"role": "user", "content": "x" * 50}], [{"role": "user", "content": "y" * 80}]]}
+
+    def test_dropped_only_when_trl_lacks_it(self):
+        grpo = {"learning_rate": 1e-6, "max_prompt_length": 100}
+        self.assertEqual(grpo_kwargs(grpo, self.NewTRL, self.data, self.Tok()), {"learning_rate": 1e-6})
+        self.assertEqual(grpo_kwargs(grpo, self.OldTRL, self.data, self.Tok()), grpo)
+
+    def test_prompt_over_limit_raises(self):
+        with self.assertRaises(ValueError):
+            grpo_kwargs({"max_prompt_length": 60}, self.NewTRL, self.data, self.Tok())
+
+    def test_unknown_keys_listed_together(self):
+        with self.assertRaisesRegex(TypeError, r"\['bogus_a', 'bogus_b'\]"):
+            grpo_kwargs({"bogus_b": 1, "bogus_a": 2}, self.NewTRL, self.data, self.Tok())
 
 
 class Target(unittest.TestCase):

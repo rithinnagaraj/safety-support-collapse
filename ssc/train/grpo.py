@@ -19,6 +19,7 @@ Requires the [gpu] extras (torch, transformers, trl, datasets; vllm for use_vllm
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import time
 from pathlib import Path
@@ -38,6 +39,32 @@ def build_dataset(cfg: dict):
     else:
         tasks = make_tasks(cfg["family"], "train", cfg.get("num_tasks", 4000), cfg.get("data_seed", 0))
     return Dataset.from_list([{"prompt": t.messages(), "task_json": t.to_json()} for t in tasks])
+
+
+def grpo_kwargs(grpo: dict, config_cls, dataset, tokenizer) -> dict:
+    """Config 'grpo' block -> GRPOConfig kwargs for the installed TRL version.
+
+    Newer TRL dropped max_prompt_length (it no longer truncates prompts). Truncating
+    would corrupt our tasks anyway, so instead check that no prompt exceeds it.
+    Any other key the installed GRPOConfig does not know is an error, listed all at once.
+    """
+    fields = {f.name for f in dataclasses.fields(config_cls)}
+    kw = dict(grpo)
+    limit = kw.get("max_prompt_length")
+    if limit is not None:
+        # Render to text, then count: tokenize=True returns a list or a dict depending on the transformers version.
+        longest = max(len(tokenizer(tokenizer.apply_chat_template(p, add_generation_prompt=True, tokenize=False),
+                                    add_special_tokens=False)["input_ids"])
+                      for p in dataset["prompt"])
+        print(f"[grpo] longest prompt: {longest} tokens (max_prompt_length {limit})", flush=True)
+        if longest > limit:
+            raise ValueError(f"a prompt has {longest} tokens, over max_prompt_length={limit}")
+        if "max_prompt_length" not in fields:
+            del kw["max_prompt_length"]
+    unknown = sorted(set(kw) - fields)
+    if unknown:
+        raise TypeError(f"GRPOConfig in this TRL version does not accept: {unknown}")
+    return kw
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -75,17 +102,18 @@ def main(argv: list[str] | None = None) -> None:
                 control.should_training_stop = True
                 control.should_save = True
 
+    dataset = build_dataset(cfg)
     trainer_args = GRPOConfig(
         output_dir=str(args.out),
         seed=cfg["seed"],
         num_generations=group_size,
-        **cfg["grpo"],
+        **grpo_kwargs(cfg["grpo"], GRPOConfig, dataset, tokenizer),
     )
     trainer = GRPOTrainer(
         model=cfg["model"],
         reward_funcs=[reward],
         args=trainer_args,
-        train_dataset=build_dataset(cfg),
+        train_dataset=dataset,
         processing_class=tokenizer,
         callbacks=[BudgetCallback()],
     )
