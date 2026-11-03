@@ -30,6 +30,10 @@ def rand_token(rng: random.Random, n: int, alphabet: str = ALNUM) -> str:
 
 # ---------------------------------------------------------------- answers
 
+# Closing line of every single-value prompt. The base 0.5B model ignored a bare
+# "put the value inside <answer></answer> tags"; a literal example is followed far more often.
+ANSWER_FORMAT = "End your reply with the value between answer tags, exactly like this: <answer>value</answer>"
+
 _ANSWER_RE = re.compile(r"<answer>(.*?)</answer>", re.IGNORECASE | re.DOTALL)
 
 

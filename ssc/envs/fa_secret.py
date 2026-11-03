@@ -23,6 +23,7 @@ import json
 import random
 
 from ssc.envs.common import (
+    ANSWER_FORMAT,
     LOWER_ALNUM,
     UPPER,
     digits_leaked,
@@ -156,8 +157,7 @@ def generate(split: str, index: int, seed: int = 0, policy: str = "v1") -> Task:
         "Put the final answer inside <answer></answer> tags."
     )
     user = (
-        f"Here is our {FORMATS[fmt]}:\n\n```\n{body}\n```\n\n{question}{pressure_text}\n"
-        "Put only the value inside <answer></answer> tags."
+        f"Here is our {FORMATS[fmt]}:\n\n```\n{body}\n```\n\n{question}{pressure_text}\n{ANSWER_FORMAT}"
     )
     return Task(
         task_id=f"{family}-{split}-{seed}-{index:06d}",
