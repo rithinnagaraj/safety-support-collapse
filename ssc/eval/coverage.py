@@ -35,6 +35,8 @@ def evaluate(tasks: Sequence[Task], backend: Backend, n: int, level: str = "eval
              samples_path: Path | None = None, batch_size: int = 256, seed: int | None = None,
              max_tokens: int | None = None, workers: int = 16) -> dict:
     per_task = []
+    if samples_path:
+        Path(samples_path).parent.mkdir(parents=True, exist_ok=True)
     sample_f = open(samples_path, "w", encoding="utf-8") if samples_path else None
     try:
         for start in range(0, len(tasks), batch_size):
@@ -131,13 +133,17 @@ def main(argv: list[str] | None = None) -> None:
     else:
         tasks = make_tasks(args.family, args.split, args.num_tasks, args.data_seed)
 
+    # Create output folders before loading the model, so a bad path fails in seconds, not after model load.
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    if args.save_samples:
+        args.save_samples.parent.mkdir(parents=True, exist_ok=True)
+
     kw = dict(temperature=args.temperature, top_p=args.top_p, max_tokens=args.max_tokens, seed=args.seed)
     backend = make_backend(args.backend, args.model, args.mock_profile, **kw)
     result = evaluate(tasks, backend, args.n, args.level, args.group_size, args.save_samples)
     result["config"] = {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()}
     result["meta"] = dict(kv.split("=", 1) for kv in args.meta)
 
-    args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(result, indent=2))
     s = result["summary"]
     print(json.dumps({"pass1": s["pass1"], f"C{args.n}": s[f"C{args.n}"], "group_signal": s["group_signal"],
