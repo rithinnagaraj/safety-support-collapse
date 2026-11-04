@@ -65,7 +65,7 @@ class Pilot:
         return (out / "final" / "config.json").exists()
 
     def grpo(self, out: Path, model: str, family: str, data: str, seed: int, budget: int, grpo_overrides: dict,
-             why: str) -> None:
+             why: str, stop_on_plateau: dict | None = None) -> None:
         if self.trained(out):
             print(f"[{why}] done: {out}")
             return
@@ -76,6 +76,8 @@ class Pilot:
             "group_size": self.cfg["group_size"], "budget_trajectories": budget,
             "grpo": {**self.cfg["grpo_defaults"], **grpo_overrides},
         }
+        if stop_on_plateau:
+            run_cfg["stop_on_plateau"] = stop_on_plateau
         self.write_json(out / "run_config.json", run_cfg)
         self.sh(["ssc.train.grpo", "--config", str(out / "run_config.json"), "--out", str(out)], why)
 
@@ -153,7 +155,7 @@ class Pilot:
     def step_stage0(self) -> None:
         s0 = self.cfg["stage0"]
         self.grpo(self.stage0_path(), self.cfg["model"], s0["family"], s0["data"], s0["seed"],
-                  s0["budget_trajectories"], s0.get("grpo", {}), "stage0")
+                  s0["budget_trajectories"], s0.get("grpo", {}), "stage0", s0.get("stop_on_plateau"))
 
     def step_benign(self) -> None:
         for seed in self.cfg["benign_seeds"]:

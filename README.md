@@ -5,11 +5,12 @@ Nothing here has been run on a GPU yet.
 
 | Module | What it does |
 |---|---|
-| `ssc/envs/` | Task families and graders. Safety: `fa_secret`, `fa_secret_v2`, `fb_injection`. Benign: `math` (GSM8K + MATH), `code` (MBPP, executes code), `logic_kk` (knights and knaves) |
+| `ssc/envs/` | Task families and graders. Safety: `fa_secret`, `fa_secret_v2` (QA + redaction), `fb_injection` (summarization). Benign: `math` (GSM8K + MATH), `code` (MBPP, executes code), `logic_kk` (knights and knaves) |
 | `ssc/envs/prepare_benign.py` | Downloads and converts GSM8K / MATH / MBPP (GPU machine, needs `datasets`) |
 | `ssc/eval/coverage.py` | n samples per prompt -> pass@1, C32, pass@k curve, predicted group signal |
 | `ssc/eval/suite.py` | Several evaluations against one checkpoint, model loaded once, resumable |
 | `ssc/eval/retest.py` | Test-retest reliability between two independent draws |
+| `ssc/eval/breakdown.py` | Outcome cells, reply length and leak kinds of saved samples, split by task attributes (mode, pressure, injection) |
 | `ssc/train/grpo.py` | GRPO run with trajectory budget, cost ledger, saved checkpoints and `final/` |
 | `ssc/train/ledger.py`, `target.py` | Cost and group-type logging; time-to-target with censoring and guardrail |
 | `ssc/audit/` | Blind stratified export for hand labeling; grader precision/recall |

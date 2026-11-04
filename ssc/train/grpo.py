@@ -10,9 +10,14 @@ Writes to --out:
   ledger.jsonl      one row per generation batch: trajectories, tokens, group types
   checkpoint-<N>/   saved every `save_steps` optimizer steps, for held-out evaluation
   final/            the model at the end of the run (input to the next stage)
-  run_meta.json     resolved config, ledger totals, wall-clock time, steps
+  run_meta.json     resolved config, ledger totals, wall-clock time, steps, why it stopped
+  log_history.json  TRL's per-step logs (loss, entropy, completion length, ...)
 
-Training stops once the ledger has counted `budget_trajectories` rollouts.
+Training stops once the ledger has counted `budget_trajectories` rollouts, or,
+if the config has "stop_on_plateau": {"all_success_frac": 0.9, "window": 10},
+once that fraction of groups in the last `window` ledger rows were all-success
+(no learning signal left). Stage 0 uses the plateau rule: run to a fixed large
+budget, it collapsed the policy (entropy 0.002, ~12-token replies).
 Requires the [gpu] extras (torch, transformers, trl, datasets; vllm for use_vllm).
 """
 
@@ -39,6 +44,15 @@ def build_dataset(cfg: dict):
     else:
         tasks = make_tasks(cfg["family"], "train", cfg.get("num_tasks", 4000), cfg.get("data_seed", 0))
     return Dataset.from_list([{"prompt": t.messages(), "task_json": t.to_json()} for t in tasks])
+
+
+def plateau_reached(rows: list[dict], all_success_frac: float, window: int) -> bool:
+    """True once the last `window` ledger rows are at least `all_success_frac` all-success groups."""
+    if len(rows) < window:
+        return False
+    groups = [row["groups"] for row in rows[-window:]]
+    total = sum(sum(g.values()) for g in groups)
+    return total > 0 and sum(g["all_success"] for g in groups) / total >= all_success_frac
 
 
 def grpo_kwargs(grpo: dict, config_cls, dataset, tokenizer) -> dict:
@@ -93,12 +107,21 @@ def main(argv: list[str] | None = None) -> None:
     tokenizer = AutoTokenizer.from_pretrained(cfg["model"])
     reward = SUReward(ledger, level="train", tokenizer=tokenizer)
 
+    plateau = cfg.get("stop_on_plateau")
+    stopped_by = {"reason": "max_steps"}
+
     class BudgetCallback(TrainerCallback):
         def on_step_begin(self, _args, state, control, **_):
             ledger.current_step = state.global_step
 
         def on_step_end(self, _args, state, control, **_):
+            reason = None
             if ledger.trajectories >= budget:
+                reason = "budget"
+            elif plateau and plateau_reached(ledger.rows, **plateau):
+                reason = "plateau"
+            if reason:
+                stopped_by["reason"] = reason
                 control.should_training_stop = True
                 control.should_save = True
 
@@ -129,9 +152,11 @@ def main(argv: list[str] | None = None) -> None:
         "ledger_totals": totals,
         "reward_cells": dict(reward.cells),
         "hit_budget": ledger.trajectories >= budget,
+        "stopped_by": stopped_by["reason"],
         "global_steps": trainer.state.global_step,
         "wall_seconds": wall,
     }, indent=2))
+    (args.out / "log_history.json").write_text(json.dumps(trainer.state.log_history, indent=1))
     print(json.dumps(totals, indent=2))
 
 

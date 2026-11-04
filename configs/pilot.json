@@ -10,7 +10,7 @@
     "learning_rate": 1e-6,
     "per_device_train_batch_size": 16,
     "gradient_accumulation_steps": 16,
-    "max_prompt_length": 1024,
+    "max_prompt_length": 2048,
     "max_completion_length": 512,
     "temperature": 1.0,
     "top_p": 1.0,
@@ -29,7 +29,8 @@
   },
 
   "stage0": {"family": "fa_secret", "data": "data/fa_secret/train.jsonl", "seed": 0,
-             "budget_trajectories": 102400, "grpo": {}},
+             "budget_trajectories": 102400, "stop_on_plateau": {"all_success_frac": 0.9, "window": 10},
+             "grpo": {"max_completion_length": 768}},
 
   "benign_seeds": [1, 2, 3],
   "benign_stages": [
@@ -44,9 +45,9 @@
   ],
 
   "coverage_evals": [
-    {"name": "fb", "family": "fb_injection", "data": "data/fb_injection/heldout.jsonl", "num_tasks": 500, "n": 32, "draws": 2, "max_tokens": 512},
-    {"name": "fa", "family": "fa_secret", "data": "data/fa_secret/heldout.jsonl", "num_tasks": 500, "n": 32, "draws": 2, "max_tokens": 512},
-    {"name": "fa_v2", "family": "fa_secret_v2", "data": "data/fa_secret_v2/heldout.jsonl", "num_tasks": 500, "n": 32, "draws": 1, "max_tokens": 512},
+    {"name": "fb", "family": "fb_injection", "data": "data/fb_injection/heldout.jsonl", "num_tasks": 500, "n": 32, "draws": 2, "max_tokens": 768},
+    {"name": "fa", "family": "fa_secret", "data": "data/fa_secret/heldout.jsonl", "num_tasks": 500, "n": 32, "draws": 2, "max_tokens": 768},
+    {"name": "fa_v2", "family": "fa_secret_v2", "data": "data/fa_secret_v2/heldout.jsonl", "num_tasks": 500, "n": 32, "draws": 1, "max_tokens": 768},
     {"name": "math_easy", "family": "math", "data": "data/math_easy/heldout.jsonl", "num_tasks": 300, "n": 32, "draws": 1, "max_tokens": 1024},
     {"name": "math_hard", "family": "math", "data": "data/math_hard/heldout.jsonl", "num_tasks": 300, "n": 32, "draws": 1, "max_tokens": 1024},
     {"name": "code", "family": "code", "data": "data/code/heldout.jsonl", "num_tasks": 250, "n": 32, "draws": 1, "max_tokens": 768},
@@ -56,11 +57,11 @@
 
   "recovery": {"family": "fb_injection", "data": "data/fb_injection/train.jsonl", "budget_trajectories": 51200,
                "seeds_from_stage0": [1, 2, 3], "seeds_from_stage4": [1, 2],
-               "grpo": {"save_steps": 5}},
+               "grpo": {"save_steps": 5, "max_completion_length": 768}},
   "ceiling": {"budget_multiplier": 3, "seed": 101},
 
   "recovery_eval": {
-    "target": {"name": "fb", "family": "fb_injection", "data": "data/fb_injection/heldout.jsonl", "num_tasks": 500, "n": 4, "max_tokens": 512},
+    "target": {"name": "fb", "family": "fb_injection", "data": "data/fb_injection/heldout.jsonl", "num_tasks": 500, "n": 4, "max_tokens": 768},
     "benign": [
       {"name": "math_easy", "family": "math", "data": "data/math_easy/heldout.jsonl", "num_tasks": 250, "n": 2, "max_tokens": 1024},
       {"name": "math_hard", "family": "math", "data": "data/math_hard/heldout.jsonl", "num_tasks": 250, "n": 2, "max_tokens": 1024},

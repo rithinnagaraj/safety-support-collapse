@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from ssc.envs import get_family, make_tasks
-from ssc.train.grpo import grpo_kwargs
+from ssc.train.grpo import grpo_kwargs, plateau_reached
 from ssc.train.ledger import CostLedger, GroupAlignmentError, cost_at_step, load_rows
 from ssc.train.rewards import SUReward
 from ssc.train.target import EvalPoint, check_tau, time_to_target
@@ -119,6 +119,20 @@ class GRPOKwargs(unittest.TestCase):
     def test_unknown_keys_listed_together(self):
         with self.assertRaisesRegex(TypeError, r"\['bogus_a', 'bogus_b'\]"):
             grpo_kwargs({"bogus_b": 1, "bogus_a": 2}, self.NewTRL, self.data, self.Tok())
+
+
+class Plateau(unittest.TestCase):
+    @staticmethod
+    def rows(*all_success):  # 32 groups per row
+        return [{"groups": {"all_fail": 0, "all_success": s, "mixed": 32 - s}} for s in all_success]
+
+    def test_needs_a_full_window(self):
+        self.assertFalse(plateau_reached(self.rows(32, 32), all_success_frac=0.9, window=3))
+
+    def test_uses_only_the_last_window(self):
+        rows = self.rows(0, 0, 30, 31, 32)
+        self.assertTrue(plateau_reached(rows, all_success_frac=0.9, window=3))
+        self.assertFalse(plateau_reached(rows, all_success_frac=0.9, window=4))
 
 
 class Target(unittest.TestCase):
