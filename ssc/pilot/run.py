@@ -180,10 +180,14 @@ class Pilot:
         for ck, path in self.checkpoints().items():
             self.suite(str(path), self.coverage_spec(ck), self.res / "coverage" / ck / "spec.json", f"coverage {ck}")
 
-    def _recovery(self, name: str, start: str, seed: int, budget: int, why: str) -> None:
+    def _recovery(self, name: str, start: str, seed: int, budget: int, why: str, extra: dict | None = None) -> None:
+        """One recovery run. With recovery.eval_inline, its checkpoints are scored (and, unless
+        keep_checkpoints, deleted) right after it trains, so only one run's checkpoints are on disk."""
         rec = self.cfg["recovery"]
         self.grpo(self.runs / "recovery" / name, str(self.checkpoints()[start]), rec["family"], rec["data"],
-                  seed, budget, rec.get("grpo", {}), why)
+                  seed, budget, {**rec.get("grpo", {}), **(extra or {})}, why)
+        if rec.get("eval_inline"):
+            self._eval_run(name, start)
 
     def step_recovery(self) -> None:
         for name, (start, seed) in self.recovery_runs().items():
@@ -195,7 +199,8 @@ class Pilot:
             print("[ceiling] most-collapsed stage-4 checkpoint unknown until the coverage step has run")
         budget = self.cfg["recovery"]["budget_trajectories"] * self.cfg["ceiling"]["budget_multiplier"]
         for name, start in runs.items():
-            self._recovery(name, start, self.cfg["ceiling"]["seed"], budget, f"ceiling {name}")
+            self._recovery(name, start, self.cfg["ceiling"]["seed"], budget, f"ceiling {name}",
+                           self.cfg["ceiling"].get("grpo"))
 
     def run_starts(self) -> dict[str, str]:
         starts = {name: start for name, (start, _) in self.recovery_runs().items()}
@@ -213,18 +218,31 @@ class Pilot:
 
     def step_eval_runs(self) -> None:
         for name, start in self.run_starts().items():
-            run = self.runs / "recovery" / name
-            evals = run / "evals"
-            self._write_step0(start, evals / "step0.json")
-            ckpt_dirs = sorted(run.glob("checkpoint-*"), key=lambda p: int(p.name.split("-")[1]))
-            if not ckpt_dirs and not self.dry:
-                print(f"[eval {name}] no checkpoints found (has the run finished?)")
-            for ck in ckpt_dirs:
-                step = int(ck.name.split("-")[1])
-                self.suite(str(ck), self.recovery_eval_spec(name, step), evals / "specs" / f"step{step}.json",
-                           f"eval {name} step {step}")
-                if not self.cfg.get("keep_checkpoints", True) and not self.dry and (evals / f"step{step}.json").exists():
-                    shutil.rmtree(ck)
+            self._eval_run(name, start)
+
+    def _eval_run(self, name: str, start: str) -> None:
+        run = self.runs / "recovery" / name
+        evals = run / "evals"
+        self._write_step0(start, evals / "step0.json")
+        ckpt_dirs = sorted(run.glob("checkpoint-*"), key=lambda p: int(p.name.split("-")[1]))
+        if not ckpt_dirs and not self.dry and not (evals / "specs").exists():
+            print(f"[eval {name}] no checkpoints found (has the run finished?)")
+        prune = not self.cfg.get("keep_checkpoints", True) and not self.dry
+        for ck in ckpt_dirs:
+            step = int(ck.name.split("-")[1])
+            self.suite(str(ck), self.recovery_eval_spec(name, step), evals / "specs" / f"step{step}.json",
+                       f"eval {name} step {step}")
+            if prune and (evals / f"step{step}.json").exists():
+                shutil.rmtree(ck)
+        weights = run / "final" / "model.safetensors"
+        meta = run / "run_meta.json"
+        last_scored = ckpt_dirs and (evals / f"step{ckpt_dirs[-1].name.split('-')[1]}.json").exists()
+        same_step = meta.exists() and ckpt_dirs and \
+            json.loads(meta.read_text()).get("global_steps") == int(ckpt_dirs[-1].name.split("-")[1])
+        if prune and last_scored and same_step and weights.exists():
+            # final/ equals the last checkpoint, which was just scored. Keep its config.json so
+            # trained() still sees the run as finished.
+            weights.unlink()
 
     def _write_step0(self, start: str, out: Path) -> None:
         """The start checkpoint's own scores, from the coverage step, as the run's step-0 point."""

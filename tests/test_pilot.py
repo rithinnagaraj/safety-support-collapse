@@ -85,6 +85,46 @@ class DryRun(InTempDir):
         self.assertTrue(s1_stage2["model"].replace("\\", "/").endswith("benign/s1/stage1/final"))
 
 
+class InlineRecoveryEval(InTempDir):
+    """recovery.eval_inline: each run is scored and pruned right after it trains."""
+
+    def test_scores_and_prunes_each_run_before_the_next(self):
+        cfg = small_config(self.root)
+        cfg["recovery"]["eval_inline"] = True
+        cfg["ceiling"]["grpo"] = {"save_steps": 15}
+        pilot = Pilot(cfg, Path("pilot.json"), dry_run=False)
+        order = []
+
+        def fake_sh(args, why):
+            if args[0] == "ssc.train.grpo":
+                run_cfg = json.loads(Path(args[2]).read_text())
+                out = Path(args[4])
+                order.append(("train", out.name, run_cfg["grpo"]["save_steps"]))
+                for step in (5, 10):
+                    (out / f"checkpoint-{step}").mkdir(parents=True)
+                (out / "final").mkdir()
+                (out / "final" / "config.json").write_text("{}")
+                (out / "final" / "model.safetensors").write_text("w")
+                (out / "run_meta.json").write_text(json.dumps({"global_steps": 10}))
+            else:
+                spec = json.loads(Path(args[args.index("--spec") + 1]).read_text())
+                order.append(("eval", Path(args[args.index("--model") + 1]).parent.name))
+                for item in spec:
+                    Path(item["out"]).parent.mkdir(parents=True, exist_ok=True)
+                    Path(item["out"]).write_text("{}")
+
+        pilot.sh = fake_sh
+        pilot.step_recovery()
+        pilot.step_ceiling()
+        first = pilot.runs / "recovery" / "stage0_r1"
+        self.assertEqual(order[:3], [("train", "stage0_r1", 5), ("eval", "stage0_r1"), ("eval", "stage0_r1")])
+        self.assertIn(("train", "ceiling_stage0", 15), order)
+        self.assertFalse(list(first.glob("checkpoint-*")))
+        self.assertFalse((first / "final" / "model.safetensors").exists())
+        self.assertTrue(pilot.trained(first))
+        self.assertTrue((first / "evals" / "step10.json").exists())
+
+
 class SyntheticPilot(InTempDir):
     """Fabricate a full pilot's outputs, with a planted effect, and check the analysis finds it.
 
